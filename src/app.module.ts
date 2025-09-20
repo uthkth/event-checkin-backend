@@ -1,15 +1,15 @@
+// src/app.module.ts
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
-import { TicketModule } from './ticket/ticket.module';
+// import your TicketModule, etc.
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
-    MongooseModule.forRoot(
-      process.env.MONGO_URI || 'mongodb://localhost:27017/event-checkin',
-    ),
-    TicketModule,
+    MongooseModule.forRoot(process.env.MONGODB_URI!)
+
+    // TicketModule, ...
   ],
 })
 export class AppModule {}
