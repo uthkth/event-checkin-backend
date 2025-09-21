@@ -1,10 +1,10 @@
-import { IsOptional, IsString } from 'class-validator';
+import { IsIn, IsOptional, IsString } from 'class-validator';
 
 export class CheckinDto {
   @IsString()
   ticketReferenceNumber: string;
 
   @IsOptional()
-  @IsString()
+  @IsIn(['qr', 'manual'])
   method?: 'qr' | 'manual';
 }

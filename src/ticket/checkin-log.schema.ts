@@ -9,7 +9,7 @@ export class CheckinLog {
   ticketReferenceNumber: string;
 
   @Prop({ required: true, enum: ['qr', 'manual'] })
-  method: string;
+  method: 'qr' | 'manual';
 }
 
 export const CheckinLogSchema = SchemaFactory.createForClass(CheckinLog);

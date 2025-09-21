@@ -1,85 +1,86 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { randomUUID } from 'crypto';
 import { Model } from 'mongoose';
-import * as QRCode from 'qrcode';
-import { v4 as uuidv4 } from 'uuid';
-import { CheckinLog, CheckinLogDocument } from './checkin-log.schema';
-import { Ticket, TicketDocument } from './ticket.schema';
+import { Ticket, TicketDocument, TicketType } from './ticket.schema';
 
 @Injectable()
 export class TicketService {
   constructor(
-    @InjectModel(Ticket.name) private ticketModel: Model<TicketDocument>,
-    @InjectModel(CheckinLog.name) private logModel: Model<CheckinLogDocument>,
+    @InjectModel(Ticket.name) private readonly ticketModel: Model<TicketDocument>,
   ) {}
 
-  async findByReference(ref: string) {
-    return this.ticketModel.findOne({ ticketReferenceNumber: ref }).exec();
+  // ====== Queries ======
+  async findAll(): Promise<Ticket[]> {
+    return this.ticketModel.find().sort({ createdAt: 1 }).lean().exec();
   }
 
-  async listAll() {
-    return this.ticketModel.find().sort({ createdAt: -1 }).exec();
+  async stats() {
+    const total = await this.ticketModel.estimatedDocumentCount();
+    const checkedIn = await this.ticketModel.countDocuments({ checkedIn: true });
+
+    const types: TicketType[] = ['VIP', 'Standard', 'Student'];
+    const perType: Record<string, { total: number; checkedIn: number }> = {};
+    for (const t of types) {
+      const totalT = await this.ticketModel.countDocuments({ ticketType: t });
+      const checkedT = await this.ticketModel.countDocuments({ ticketType: t, checkedIn: true });
+      perType[t] = { total: totalT, checkedIn: checkedT };
+    }
+
+    // recent for dashboard table (optional)
+    const recent = await this.ticketModel
+      .find({ checkedIn: true, checkedInAt: { $ne: null } })
+      .sort({ checkedInAt: -1 })
+      .limit(10)
+      .lean()
+      .exec();
+
+    return { total, checkedIn, perType, recent };
   }
 
-  async getOne(ref: string) {
-    const ticket = await this.findByReference(ref);
+  // ====== Mutations ======
+  async checkInByReference(ref: string, method: 'qr' | 'manual' = 'qr'): Promise<Ticket> {
+    const ticket = await this.ticketModel.findOne({ ticketReferenceNumber: ref }).exec();
     if (!ticket) throw new NotFoundException('Ticket not found');
-    return ticket;
-  }
 
-  async checkIn(ticketReferenceNumber: string, method: 'qr' | 'manual' = 'manual') {
-    const ticket = await this.findByReference(ticketReferenceNumber);
-    if (!ticket) throw new NotFoundException('Ticket not found');
     if (ticket.checkedIn) throw new ConflictException('Ticket already checked in');
 
     ticket.checkedIn = true;
     ticket.checkedInAt = new Date();
     await ticket.save();
-
-    await this.logModel.create({ ticketReferenceNumber, method });
-
-    return ticket;
+    return ticket.toObject();
   }
 
-  async stats() {
-    const tickets = await this.ticketModel.find().exec();
+  // ====== Utilities for seeding/reset ======
+  async clearAll() {
+    await this.ticketModel.deleteMany({});
+  }
 
-    const perType: Record<string, { total: number; checkedIn: number }> = {};
-    let totalChecked = 0;
+  /**
+   * Seed fixed distribution (e.g., { VIP: 5, Standard: 5, Student: 5 })
+   */
+  async seedFixed(distribution: Partial<Record<TicketType, number>>) {
+    const names = [
+      'Customer1','Customer2','Customer3','Customer4','Customer5',
+      'Customer6','Customer7','Customer8','Customer9','Customer10',
+      'Customer11','Customer12','Customer13','Customer14','Customer15',
+    ];
+    const docs: Partial<Ticket>[] = [];
+    const order: TicketType[] = ['VIP', 'Standard', 'Student'];
 
-    tickets.forEach((t) => {
-      perType[t.ticketType] = perType[t.ticketType] || { total: 0, checkedIn: 0 };
-      perType[t.ticketType].total++;
-      if (t.checkedIn) {
-        perType[t.ticketType].checkedIn++;
-        totalChecked++;
+    let nameIdx = 0;
+    for (const type of order) {
+      const count = distribution[type] ?? 0;
+      for (let i = 0; i < count; i++) {
+        docs.push({
+          ticketReferenceNumber: randomUUID(),
+          ticketType: type,
+          checkedIn: false,
+          customerName: names[nameIdx++ % names.length],
+        });
       }
-    });
-
-    return {
-      total: tickets.length,
-      checkedIn: totalChecked,
-      perType,
-    };
-  }
-
-  async seed(n = 15) {
-    const sampleTypes = ['VIP', 'Standard', 'Student'];
-    const created: TicketDocument[] = [];
-
-    for (let i = 0; i < n; i++) {
-      const ref = uuidv4();
-      const type = sampleTypes[i % sampleTypes.length];
-      const qr = await QRCode.toDataURL(ref); // data URL image
-
-      const ticket = await this.ticketModel.create({
-        ticketReferenceNumber: ref,
-        ticketType: type,
-        qrCode: qr,
-        checkedIn: false,
-      });
-      created.push(ticket);
     }
-    return created;
+    await this.ticketModel.insertMany(docs);
+    return docs.length;
   }
 }
